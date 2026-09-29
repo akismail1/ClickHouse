@@ -1351,7 +1351,11 @@ static void writeMetadataFiles(
 
 static std::vector<String> getOldFiles(ObjectStoragePtr object_storage, const String & table_path)
 {
-    auto metadata_files = listFiles(*object_storage, table_path, "metadata", ".metadata.json");
+    auto metadata_files = listFiles(*object_storage, table_path, "metadata", "");
+    std::erase_if(metadata_files, [](const String & file)
+    {
+        return file.ends_with("metadata/version-hint.text");
+    });
     auto data_files = listFiles(*object_storage, table_path, "data", "");
 
     for (auto && data_file : data_files)
