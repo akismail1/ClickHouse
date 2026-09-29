@@ -41,6 +41,7 @@
 namespace DB::ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
+    extern const int FILE_ALREADY_EXISTS;
     extern const int LOGICAL_ERROR;
     extern const int ICEBERG_SPECIFICATION_VIOLATION;
     extern const int NOT_IMPLEMENTED;
@@ -206,6 +207,7 @@ static Plan getPlan(
         log.get(),
         persistent_table_components.table_uuid,
         persistent_table_components.metadata_compression_method);
+    plan.generator.setVersion(metadata_version + 1);
 
     Poco::JSON::Object::Ptr initial_metadata_object
         = getMetadataJSONObject(metadata_file_path, object_storage, persistent_table_components.metadata_cache, context, log, compression_method, persistent_table_components.table_uuid);
@@ -1334,21 +1336,22 @@ static void writeMetadataFiles(
     {
         std::string json_representation = stringifyJSON(metadata_object, 4);
 
-        auto buffer_metadata = object_storage->writeObject(
-            StoredObject(path_resolver.resolve(generated_metadata_info.path)),
-            WriteMode::Rewrite,
-            std::nullopt,
-            DBMS_DEFAULT_BUFFER_SIZE,
-            context->getWriteSettings());
-
-        buffer_metadata->write(json_representation.data(), json_representation.size());
-        buffer_metadata->finalize();
+        auto hint_path = plan.generator.generateVersionHint();
+        if (!writeMetadataFileAndVersionHint(
+                path_resolver,
+                generated_metadata_info,
+                json_representation,
+                hint_path,
+                object_storage,
+                context,
+                /* try_write_version_hint */ true))
+            throw Exception(ErrorCodes::FILE_ALREADY_EXISTS, "Metadata file {} already exists", generated_metadata_info.path.serialize());
     }
 }
 
 static std::vector<String> getOldFiles(ObjectStoragePtr object_storage, const String & table_path)
 {
-    auto metadata_files = listFiles(*object_storage, table_path, "metadata", "");
+    auto metadata_files = listFiles(*object_storage, table_path, "metadata", ".metadata.json");
     auto data_files = listFiles(*object_storage, table_path, "data", "");
 
     for (auto && data_file : data_files)
